@@ -3,6 +3,7 @@
 WORK_PATH=$(dirname $(readlink -f $0))
 readonly WORK_PATH
 
+# 舊GitLab API token
 TOKEN=Y2y6wW3_uDExGdmt_--H
 
 # 新GitLab API token
@@ -17,7 +18,7 @@ Init() {
     done
 }
 
-FetchRepo(){
+FetchRepoInfo(){
 
     for gp in ${GROUP[@]}
     do
@@ -42,14 +43,14 @@ FetchRepo(){
                     --header "Authorization: Bearer $NEW_TOKEN" | jq -c '[ .[] | {"id":.id}]')
                 group_id=$(echo $group_info | jq -c ".[] .id" )
 
-                # SyncRepo $repoList
+                SyncRepo $repoList $gp
 
                 PushToRemoteRepo $repoList $group_id
 
                 (( repoPage++ ))
             done
         printf "\E[1;33m"
-        echo -e "\n<===== $gp專案拉取完畢! =====>\n"
+        echo -e "\n<===== $gp同步完畢! =====>\n"
         printf "\E[0m"
     done
 }
@@ -70,10 +71,13 @@ SyncRepo(){
         then
             # 專案存在則對每個分支做pull
             printf "\E[1;32m"
-            echo "<===== $group/$name已存在，進行pull =====>"
+            echo -e "\n<===== $group/$name已存在，進行pull =====>"
             printf "\E[0m"
 
             cd $repo_dir/$name
+
+            # 修改remote url
+            git remote set-url origin git@git.cchntek.com:$gp/$name.git
 
             # 對每個分支進行pull
             for br in ${BRANCH[@]}
@@ -85,7 +89,7 @@ SyncRepo(){
         else
             # 專案不存在則做clone
             printf "\E[1;32m"
-            echo "<===== $group/$name不存在 - 進行clone =====>"
+            echo -e "\n<===== $group/$name不存在 - 進行clone =====>"
             printf "\E[0m"
 
             cd $repo_dir
@@ -99,8 +103,10 @@ SyncRepo(){
             git checkout -b $br origin/$br
             done
         fi
+        printf "\E[1;32m"
+        echo -e "<===== $group/$name已同步至本地端 =====>\n"
+        printf "\E[0m"
     done
-
 }
 
 PushToRemoteRepo(){
@@ -109,16 +115,46 @@ PushToRemoteRepo(){
     for ((i=0;i < $count; i++))
     do
         name=$(echo $repoList | jq -c ".[$i] .name" | sed s/\"//g)
+        group=$(echo $repoList | jq -c ".[$i] .group" | sed s/\"//g)
         description=$(echo $repoList | jq -c ".[$i] .description" | sed s/\"//g)
 
-        curl --silent --insecure --request POST 'https://git.1688898.xyz/api/v4/projects' \
+        printf "\E[1;32m"
+        echo -e "\n<===== $group/$name開始同步至遠端Repo =====>"
+        printf "\E[0m"
+
+        cd $WORK_PATH/$group/$name
+
+        check_repo=$(curl --insecure --request GET "https://git.1688898.xyz/api/v4/groups/$gp/projects?search=$name" \
+        --header "Authorization: Bearer $NEW_TOKEN")
+
+        # 修改remote url
+        git remote set-url origin git@git.1688898.xyz:$gp/$name.git
+
+        if [[ $check_repo == [] ]]
+        then
+            curl --silent --insecure --request POST 'https://git.1688898.xyz/api/v4/projects' \
                                 --header "Authorization: Bearer $NEW_TOKEN" \
                                 --form "name=$name" \
                                 --form "path=$name" \
                                 --form "namespace_id=$group_id" \
                                 --form "description=$description"
-        
+            
+            for br in ${BRANCH[@]}
+            do
+                git checkout $br
+                git push -u origin $br
+            done
+        else
+            for br in ${BRANCH[@]}
+            do
+                git checkout $br
+                git push
+            done
+        fi
 
+        printf "\E[1;32m"
+        echo -e "<===== $group/$name已同步至遠端Repo =====>\n"
+        printf "\E[0m"
     done
 }
 
@@ -126,9 +162,6 @@ PushToRemoteRepo(){
 Init
 
 # 取得舊專案最新資訊
-FetchRepo
-
-# 同步到本地端
-SyncRepo
+FetchRepoInfo
 
 
